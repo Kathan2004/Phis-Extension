@@ -1,0 +1,17 @@
+[
+  {
+    "hash": "secure-microsoft-login-check.com",
+    "source": "openphish",
+    "kind": "domain"
+  },
+  {
+    "hash": "verify-account-security-alert.net",
+    "source": "phishtank",
+    "kind": "domain"
+  },
+  {
+    "hash": "http://account-verify-billing-update.example/login",
+    "source": "malware",
+    "kind": "url"
+  }
+]

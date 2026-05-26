@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+.phis-gradient {
+  background-image: radial-gradient(circle at 0% 0%, rgba(53, 212, 255, 0.17), transparent 42%),
+    radial-gradient(circle at 100% 80%, rgba(255, 95, 87, 0.18), transparent 38%),
+    linear-gradient(140deg, #05090e, #0b131d 40%, #071a24);
+}
+
+.phis-glass {
+  background: rgba(12, 19, 28, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(53, 212, 255, 0.2);
+}
