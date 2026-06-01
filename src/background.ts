@@ -4,6 +4,7 @@ import { db } from "./storage/db"
 import { configureOnnxRuntime } from "./engines/ml/onnx-session"
 import { loadManagedPolicy } from "./security/enterprise-policy"
 import { bootstrapThreatFeed } from "./threatfeeds/bootstrap"
+import { getVirusTotalScore } from "./threatfeeds/virustotal"
 
 void configureOnnxRuntime()
 
@@ -21,21 +22,36 @@ chrome.runtime.onInstalled.addListener(async () => {
 })
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "PHIS_ANALYZE_EMAIL") {
-    return false
+  if (message?.type === "PHIS_ANALYZE_EMAIL") {
+    const run = async () => {
+      const raw = message.payload as RawEmailDom
+      const normalized = normalizeEmail(raw)
+      const result = await analyzeEmail(normalized)
+      await db.riskResults.put(result)
+      sendResponse({ ok: true, result })
+    }
+
+    run().catch((error) => {
+      sendResponse({ ok: false, error: String(error) })
+    })
+
+    return true
   }
 
-  const run = async () => {
-    const raw = message.payload as RawEmailDom
-    const normalized = normalizeEmail(raw)
-    const result = await analyzeEmail(normalized)
-    await db.riskResults.put(result)
-    sendResponse({ ok: true, result })
+  if (message?.type === "PHIS_GET_VT_SCORE") {
+    const run = async () => {
+      const url = message.payload as string
+      const score = await getVirusTotalScore(url)
+      sendResponse({ ok: true, score })
+    }
+
+    run().catch((error) => {
+      sendResponse({ ok: false, error: String(error) })
+    })
+
+    return true
   }
 
-  run().catch((error) => {
-    sendResponse({ ok: false, error: String(error) })
-  })
-
-  return true
+  return false
 })
+

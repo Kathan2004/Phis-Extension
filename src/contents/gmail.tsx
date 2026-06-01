@@ -11,8 +11,41 @@ const senderSelector = "h3.iw span[email]"
 const subjectSelector = "h2.hP"
 const bodySelector = "div.a3s"
 const attachmentSelector = "div.aQA span.aV3"
+const headerSelector = "div.gX" // Gmail header section
 
 const safeQueryText = (selector: string) => document.querySelector(selector)?.textContent?.trim() || ""
+
+const extractGmailHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {}
+  
+  // Look for authentication headers in Gmail's email details
+  const headerSection = document.querySelector("div.gX, div.nH")
+  if (headerSection) {
+    const text = headerSection.textContent?.toLowerCase() || ""
+    
+    // Extract SPF, DKIM, DMARC status from visible headers
+    if (text.includes("spf=pass")) headers["spf"] = "pass"
+    else if (text.includes("spf=fail")) headers["spf"] = "fail"
+    else if (text.includes("spf=neutral")) headers["spf"] = "neutral"
+    
+    if (text.includes("dkim=pass")) headers["dkim"] = "pass"
+    else if (text.includes("dkim=fail")) headers["dkim"] = "fail"
+    
+    if (text.includes("dmarc=pass")) headers["dmarc"] = "pass"
+    else if (text.includes("dmarc=fail")) headers["dmarc"] = "fail"
+  }
+  
+  // Try to find from Gmail's security details tooltip
+  const securityIcon = document.querySelector("g-img[data-tooltip*='signed']")
+  if (securityIcon) {
+    const tooltip = securityIcon.getAttribute("data-tooltip") || ""
+    if (tooltip.toLowerCase().includes("fail")) {
+      headers["authentication"] = "failed"
+    }
+  }
+  
+  return headers
+}
 
 const extractGmailEmail = (): RawEmailDom | null => {
   const senderEl = document.querySelector(senderSelector)
@@ -42,7 +75,8 @@ const extractGmailEmail = (): RawEmailDom | null => {
     subject,
     bodyText: bodyRoot.textContent?.trim() || "",
     links,
-    attachments
+    attachments,
+    headers: extractGmailHeaders()
   }
 }
 

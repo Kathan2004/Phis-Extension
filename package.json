@@ -18,7 +18,7 @@
       }
     ],
     "content_security_policy": {
-      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self';"
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' ws://localhost:* http://localhost:* https://www.virustotal.com https://api.abuseipdb.com;"
     }
   },
   "scripts": {

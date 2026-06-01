@@ -7,6 +7,27 @@ export const config: PlasmoCSConfig = {
   run_at: "document_idle"
 }
 
+const extractOutlookHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {}
+  
+  // Look for authentication details in Outlook's message pane
+  const detailsPanel = document.querySelector('[data-testid*="message-details"], div[role="region"]')
+  if (detailsPanel) {
+    const text = detailsPanel.textContent?.toLowerCase() || ""
+    
+    if (text.includes("spf=pass")) headers["spf"] = "pass"
+    else if (text.includes("spf=fail")) headers["spf"] = "fail"
+    
+    if (text.includes("dkim=pass")) headers["dkim"] = "pass"
+    else if (text.includes("dkim=fail")) headers["dkim"] = "fail"
+    
+    if (text.includes("dmarc=pass")) headers["dmarc"] = "pass"
+    else if (text.includes("dmarc=fail")) headers["dmarc"] = "fail"
+  }
+  
+  return headers
+}
+
 const extractOutlookEmail = (): RawEmailDom | null => {
   const sender = (document.querySelector('[aria-label*="From"]')?.textContent || "").trim()
   const subject = (document.querySelector('[role="heading"]')?.textContent || "").trim()
@@ -28,7 +49,8 @@ const extractOutlookEmail = (): RawEmailDom | null => {
     subject,
     bodyText: bodyRoot.textContent?.trim() || "",
     links,
-    attachments: []
+    attachments: [],
+    headers: extractOutlookHeaders()
   }
 }
 
