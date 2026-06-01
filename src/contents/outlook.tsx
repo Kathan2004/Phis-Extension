@@ -10,7 +10,6 @@ export const config: PlasmoCSConfig = {
 const extractOutlookHeaders = (): Record<string, string> => {
   const headers: Record<string, string> = {}
   
-  // Look for authentication details in Outlook's message pane
   const detailsPanel = document.querySelector('[data-testid*="message-details"], div[role="region"]')
   if (detailsPanel) {
     const text = detailsPanel.textContent?.toLowerCase() || ""
@@ -54,6 +53,45 @@ const extractOutlookEmail = (): RawEmailDom | null => {
   }
 }
 
+const showBanner = (text: string, threatLevel: string) => {
+  const existing = document.getElementById("phis-outlook-banner-host")
+  if (existing) existing.remove()
+
+  const host = document.createElement("div")
+  host.id = "phis-outlook-banner-host"
+  const shadow = host.attachShadow({ mode: "closed" })
+
+  const levelColors: Record<string, string> = {
+    safe: "#10b981",
+    low: "#06b6d4",
+    suspicious: "#f59e0b",
+    high: "#f97316",
+    critical: "#ef4444"
+  }
+  const color = levelColors[threatLevel] ?? "#06b6d4"
+
+  const inner = document.createElement("div")
+  inner.style.cssText = [
+    "position:fixed",
+    "top:12px",
+    "right:12px",
+    "z-index:2000000000",
+    "padding:12px 14px",
+    "max-width:420px",
+    "border-radius:12px",
+    "background:rgba(9,16,26,0.96)",
+    `border:1px solid ${color}`,
+    "box-shadow:0 14px 32px rgba(0,0,0,0.38)",
+    "font:12px/1.4 Segoe UI,sans-serif",
+    `color:${color}`,
+    "user-select:none"
+  ].join(";")
+  inner.textContent = text
+  shadow.appendChild(inner)
+  document.body.appendChild(host)
+  setTimeout(() => host.remove(), 12000)
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "PHIS_REQUEST_ACTIVE_EMAIL") return false
   sendResponse({ email: extractOutlookEmail() })
@@ -83,38 +121,42 @@ const injectOutlookButton = () => {
   button.addEventListener("click", () => {
     const email = extractOutlookEmail()
     if (!email) return
-    chrome.runtime.sendMessage({ type: "PHIS_ANALYZE_EMAIL", payload: email }, (response) => {
-      if (!response?.ok || !response.result) return
-      const existing = document.querySelector("#phis-outlook-banner")
-      if (existing) existing.remove()
+    button.textContent = "Scanning..."
+    button.style.opacity = "0.6"
 
-      const banner = document.createElement("div")
-      banner.id = "phis-outlook-banner"
-      banner.textContent = `PHIS Sentinel: ${response.result.threatLevel.toUpperCase()} (${response.result.score}/100)`
-      banner.style.cssText = [
-        "position:fixed",
-        "top:12px",
-        "right:12px",
-        "z-index:2147483647",
-        "padding:12px 14px",
-        "max-width:420px",
-        "border-radius:12px",
-        "background:rgba(9,16,26,0.96)",
-        "color:#ecfeff",
-        "border:1px solid rgba(53,212,255,0.45)",
-        "box-shadow:0 14px 32px rgba(0,0,0,0.38)",
-        "font:12px/1.4 Segoe UI"
-      ].join(";")
-      document.body.appendChild(banner)
-      setTimeout(() => banner.remove(), 12000)
+    chrome.runtime.sendMessage({ type: "PHIS_ANALYZE_EMAIL", payload: email }, (response) => {
+      button.textContent = "Scan with PHIS"
+      button.style.opacity = "1"
+
+      if (chrome.runtime.lastError) {
+        showBanner("PHIS Sentinel: scan error — " + chrome.runtime.lastError.message, "suspicious")
+        return
+      }
+      if (!response?.ok || !response.result) {
+        showBanner("PHIS Sentinel: analysis failed", "suspicious")
+        return
+      }
+
+      const { threatLevel, score, explanation } = response.result
+      const summary = explanation[0] || "No major indicators detected"
+      showBanner(`PHIS Sentinel: ${threatLevel.toUpperCase()} (${score}/100) — ${summary}`, threatLevel)
     })
   })
 
   toolbar.appendChild(button)
 }
 
-new MutationObserver(() => injectOutlookButton()).observe(document.documentElement, {
-  childList: true,
-  subtree: true
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+const observer = new MutationObserver(() => {
+  if (debounceTimer !== null) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(injectOutlookButton, 400)
 })
+
+observer.observe(document.documentElement, { childList: true, subtree: true })
 injectOutlookButton()
+
+window.addEventListener("beforeunload", () => {
+  observer.disconnect()
+  if (debounceTimer !== null) clearTimeout(debounceTimer)
+})

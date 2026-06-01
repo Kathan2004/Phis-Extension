@@ -1,10 +1,41 @@
 /**
  * VirusTotal API Integration
- * Handles secure API calls to VirusTotal for URL reputation checks
+ * API key is stored in chrome.storage.managed (enterprise) or chrome.storage.local (user-provided).
+ * Configure your key via the extension Settings panel or MDM policy.
  */
 
-const VT_API_KEY = "5a9219f6d9b2761fcb99552cd745603e1ffd8a0c265a468a61d1ab8a4fb5fa99"
 const VT_API_URL = "https://www.virustotal.com/api/v3"
+
+const getVtApiKey = async (): Promise<string | null> => {
+  // Enterprise policy takes priority
+  if (chrome.storage?.managed) {
+    try {
+      const managed = await new Promise<Record<string, unknown>>((resolve) => {
+        chrome.storage.managed.get("vtApiKey", (items) => {
+          if (chrome.runtime.lastError || !items) resolve({})
+          else resolve(items)
+        })
+      })
+      if (typeof managed.vtApiKey === "string" && managed.vtApiKey.length > 0) {
+        return managed.vtApiKey
+      }
+    } catch {
+      // Managed storage not available; fall through
+    }
+  }
+
+  // User-provided key
+  try {
+    const local = await chrome.storage.local.get("vtApiKey")
+    if (typeof local.vtApiKey === "string" && local.vtApiKey.length > 0) {
+      return local.vtApiKey
+    }
+  } catch {
+    // Storage unavailable
+  }
+
+  return null
+}
 
 export interface VirusTotalScore {
   url: string
@@ -17,12 +48,14 @@ export interface VirusTotalScore {
 }
 
 /**
- * Fetch URL reputation from VirusTotal
- * Uses URL API v3 with API key for authentication
+ * Fetch URL reputation from VirusTotal.
+ * Returns null if no API key is configured or on network error.
  */
 export const getVirusTotalScore = async (url: string): Promise<VirusTotalScore | null> => {
+  const apiKey = await getVtApiKey()
+  if (!apiKey) return null
+
   try {
-    // Encode URL for VirusTotal lookup
     const urlId = btoa(url).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")
 
     const controller = new AbortController()
@@ -31,7 +64,7 @@ export const getVirusTotalScore = async (url: string): Promise<VirusTotalScore |
     const response = await fetch(`${VT_API_URL}/urls/${urlId}`, {
       method: "GET",
       headers: {
-        "x-apikey": VT_API_KEY
+        "x-apikey": apiKey
       },
       signal: controller.signal
     })
