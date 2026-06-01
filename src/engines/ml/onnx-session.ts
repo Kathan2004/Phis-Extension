@@ -1,31 +1,33 @@
-let initialized = false
-let ortRuntime: any | undefined
+interface OrtRuntime {
+  env: {
+    wasm: { numThreads: number; simd: boolean }
+    logLevel: string
+  }
+}
 
-const loadRuntime = async () => {
-  if (ortRuntime) return ortRuntime
+let configurePromise: Promise<void> | null = null
+
+const loadRuntime = async (): Promise<OrtRuntime | undefined> => {
   try {
-    ortRuntime = await import("onnxruntime-web")
-    return ortRuntime
+    return (await import("onnxruntime-web")) as unknown as OrtRuntime
   } catch {
-    ortRuntime = undefined
     return undefined
   }
 }
 
-export const configureOnnxRuntime = async () => {
-  if (initialized) return
-  const ort = await loadRuntime()
-  if (!ort?.env?.wasm) {
-    initialized = true
-    return
+export const configureOnnxRuntime = (): Promise<void> => {
+  if (!configurePromise) {
+    configurePromise = (async () => {
+      const ort = await loadRuntime()
+      if (!ort?.env?.wasm) return
+      ort.env.wasm.numThreads = 1
+      ort.env.wasm.simd = true
+      ort.env.logLevel = "warning"
+    })()
   }
-
-  ort.env.wasm.numThreads = 1
-  ort.env.wasm.simd = true
-  ort.env.logLevel = "warning"
-  initialized = true
+  return configurePromise
 }
 
-export const supportsWebGpu = async () => {
+export const supportsWebGpu = (): boolean => {
   return typeof navigator !== "undefined" && Boolean((navigator as Navigator & { gpu?: unknown }).gpu)
 }

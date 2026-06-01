@@ -127,15 +127,12 @@ export const runRuleEngine = (email: EmailArtifact): Indicator[] => {
     })
   }
 
+  const seenHomoglyphDomains = new Set<string>()
   email.links.forEach((link) => {
     const hrefDomain = domainFromUrl(link.href)
 
-    // REMOVED: Display text mismatches (anchor mismatch)
-    // Industry standard: Gmail, Outlook, etc. do NOT flag display text vs URL mismatches
-    // This is normal in legitimate emails for branding, marketing, and user clarity
-    // The actual risk is WHERE the link goes, not what text is displayed
-
-    if (hrefDomain && (hasSuspiciousUnicode(hrefDomain) || hasHomoglyphPatterns(hrefDomain))) {
+    if (hrefDomain && !seenHomoglyphDomains.has(hrefDomain) && (hasSuspiciousUnicode(hrefDomain) || hasHomoglyphPatterns(hrefDomain))) {
+      seenHomoglyphDomains.add(hrefDomain)
       indicators.push({
         id: `url_homoglyph_${hrefDomain}`,
         category: "url",

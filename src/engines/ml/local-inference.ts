@@ -1,38 +1,46 @@
 import type { ModelInference } from "../../types/analysis"
 
 type ClassifierResult = Array<{ label: string; score: number }>
+type LocalPipeline = (input: string, options?: Record<string, unknown>) => Promise<ClassifierResult>
 
-type LocalPipeline = (input: string, options?: Record<string, unknown>) => Promise<unknown>
+interface TransformersModule {
+  env: {
+    allowRemoteModels: boolean
+    allowLocalModels: boolean
+    useBrowserCache: boolean
+  }
+  pipeline: (
+    task: string,
+    model: string,
+    options?: Record<string, unknown>
+  ) => Promise<LocalPipeline>
+}
 
-let classifier: LocalPipeline | null = null
-let loading = false
+let classifierPromise: Promise<LocalPipeline | null> | null = null
 
-const loadTransformers = async () => {
-  const mod = (await import("@xenova/transformers")) as any
+const loadTransformers = async (): Promise<TransformersModule> => {
+  const mod = (await import("@xenova/transformers")) as unknown as TransformersModule
   mod.env.allowRemoteModels = false
   mod.env.allowLocalModels = true
   mod.env.useBrowserCache = true
   return mod
 }
 
-const loadClassifier = async () => {
-  if (classifier || loading) {
-    return classifier
+const loadClassifier = (): Promise<LocalPipeline | null> => {
+  if (!classifierPromise) {
+    classifierPromise = (async () => {
+      try {
+        const transformers = await loadTransformers()
+        return await transformers.pipeline("text-classification", "Xenova/distilbert-base-uncased-finetuned-sst-2-english", {
+          quantized: true
+        })
+      } catch {
+        classifierPromise = null
+        return null
+      }
+    })()
   }
-
-  loading = true
-  try {
-    const transformers = await loadTransformers()
-    classifier = (await transformers.pipeline("text-classification", "Xenova/distilbert-base-uncased-finetuned-sst-2-english", {
-      quantized: true
-    })) as LocalPipeline
-  } catch {
-    classifier = null
-  } finally {
-    loading = false
-  }
-
-  return classifier
+  return classifierPromise
 }
 
 const heuristicFallback = (text: string): ModelInference => {
@@ -56,7 +64,7 @@ export const runLocalNlpInference = async (text: string): Promise<ModelInference
   }
 
   try {
-    const output = (await model(text, { topk: 2 })) as ClassifierResult
+    const output = await model(text, { topk: 2 })
     const positive = output.find((item) => item.label.toLowerCase().includes("positive"))
     const phishingProbability = 1 - (positive?.score ?? 0.5)
 

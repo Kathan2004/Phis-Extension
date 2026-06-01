@@ -17,6 +17,8 @@ interface VirusTotalScore {
   safe?: boolean
 }
 
+const MAX_VT_LOOKUPS = 5
+
 export function DetailedReport({
   email,
   result
@@ -30,9 +32,12 @@ export function DetailedReport({
     dmarc: "unknown"
   })
   const [vtScores, setVtScores] = useState<VirusTotalScore[]>([])
-  const [loading, setLoading] = useState(true)
+  const [vtLoading, setVtLoading] = useState(true)
+  const [vtConfigured, setVtConfigured] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
+
     const parseHeaders = () => {
       const headerBlob = Object.entries(email.headers || {})
         .map(([k, v]) => `${k}:${v}`)
@@ -51,39 +56,64 @@ export function DetailedReport({
     }
 
     const fetchVirusTotalScores = async () => {
-      const scores: VirusTotalScore[] = []
+      // Check if VT key is configured before making requests
+      const keyCheck = await new Promise<boolean>((resolve) => {
+        chrome.runtime.sendMessage({ type: "PHIS_GET_VT_KEY" }, (response) => {
+          if (chrome.runtime.lastError || !response?.ok) resolve(false)
+          else resolve(Boolean(response.configured))
+        })
+      })
+
+      if (!keyCheck) {
+        if (!cancelled) setVtConfigured(false)
+        return
+      }
+
+      // Deduplicate by hostname, limit to MAX_VT_LOOKUPS
+      const seenHosts = new Set<string>()
+      const urlsToScan: string[] = []
       for (const link of email.links) {
         try {
-          // Request VirusTotal score from background service
-          await new Promise((resolve) => {
-            const timeout = setTimeout(() => {
-              console.debug("VT lookup timeout")
-              resolve(null)
-            }, 5000)
-
-            chrome.runtime.sendMessage(
-              { type: "PHIS_GET_VT_SCORE", payload: link.href },
-              (response) => {
-                clearTimeout(timeout)
-                if (response?.ok && response.score) {
-                  scores.push(response.score)
-                }
-                resolve(response)
-              }
-            )
-          })
-        } catch (e) {
-          // Handle error silently, VT is optional
-          console.debug("VT lookup failed:", e)
+          const host = new URL(link.href).hostname
+          if (!seenHosts.has(host)) {
+            seenHosts.add(host)
+            urlsToScan.push(link.href)
+          }
+        } catch {
+          // Skip malformed URLs
         }
+        if (urlsToScan.length >= MAX_VT_LOOKUPS) break
       }
-      setVtScores(scores)
+
+      const scores: VirusTotalScore[] = []
+      for (const url of urlsToScan) {
+        if (cancelled) return
+        const score = await new Promise<VirusTotalScore | null>((resolve) => {
+          const timeout = setTimeout(() => resolve(null), 10_000)
+          chrome.runtime.sendMessage({ type: "PHIS_GET_VT_SCORE", payload: url }, (response) => {
+            clearTimeout(timeout)
+            if (chrome.runtime.lastError || !response?.ok) resolve(null)
+            else resolve(response.score ?? null)
+          })
+        })
+        if (score) scores.push(score)
+      }
+
+      if (!cancelled) setVtScores(scores)
     }
 
-    parseHeaders()
-    fetchVirusTotalScores()
-    setLoading(false)
-  }, [email])
+    const run = async () => {
+      parseHeaders()
+      await fetchVirusTotalScores()
+      if (!cancelled) setVtLoading(false)
+    }
+
+    run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [email.id])
 
   const getAuthStatus = (status: string) => {
     switch (status) {
@@ -96,12 +126,8 @@ export function DetailedReport({
     }
   }
 
-  if (loading) {
-    return <div className="text-center text-gray-400 py-4">Fetching threat intelligence...</div>
-  }
-
   return (
-    <div className="space-y-4 text-xs text-slate-300">
+    <div className="space-y-4 text-xs text-slate-300 p-3">
       {/* Authentication Headers */}
       <div className="border border-cyan-900/30 rounded p-3 bg-slate-900/50">
         <h3 className="font-bold text-cyan-300 mb-2">Email Authentication</h3>
@@ -132,9 +158,17 @@ export function DetailedReport({
       </div>
 
       {/* VirusTotal Link Scores */}
-      {vtScores.length > 0 && (
-        <div className="border border-cyan-900/30 rounded p-3 bg-slate-900/50">
-          <h3 className="font-bold text-cyan-300 mb-2">Link Reputation (VirusTotal)</h3>
+      <div className="border border-cyan-900/30 rounded p-3 bg-slate-900/50">
+        <h3 className="font-bold text-cyan-300 mb-2">Link Reputation (VirusTotal)</h3>
+        {!vtConfigured ? (
+          <p className="text-slate-500 text-[10px]">
+            Configure a VirusTotal API key in Settings to enable link reputation checks.
+          </p>
+        ) : vtLoading ? (
+          <p className="text-slate-500 text-[10px] animate-pulse">Scanning links…</p>
+        ) : vtScores.length === 0 ? (
+          <p className="text-slate-500 text-[10px]">No scannable links found.</p>
+        ) : (
           <div className="space-y-2">
             {vtScores.map((score, idx) => (
               <div key={idx} className="border-t border-slate-700/50 pt-2 first:border-0 first:pt-0">
@@ -147,22 +181,26 @@ export function DetailedReport({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Risk Indicators */}
       {result.indicators.length > 0 && (
         <div className="border border-cyan-900/30 rounded p-3 bg-slate-900/50">
           <h3 className="font-bold text-cyan-300 mb-2">Detected Indicators ({result.indicators.length})</h3>
           <div className="space-y-1 max-h-40 overflow-y-auto">
-            {result.indicators.slice(0, 5).map((indicator) => (
+            {result.indicators.slice(0, 8).map((indicator) => (
               <div key={indicator.id} className="text-gray-400 text-[10px]">
                 <span className="text-orange-300">•</span> {indicator.title}
-                {indicator.evidence && <div className="text-gray-500 ml-2">Evidence: {indicator.evidence}</div>}
+                {indicator.evidence && (
+                  <div className="text-gray-500 ml-2 font-mono break-all">
+                    {indicator.evidence}
+                  </div>
+                )}
               </div>
             ))}
-            {result.indicators.length > 5 && (
-              <div className="text-gray-500 text-[10px]">+{result.indicators.length - 5} more indicators</div>
+            {result.indicators.length > 8 && (
+              <div className="text-gray-500 text-[10px]">+{result.indicators.length - 8} more indicators</div>
             )}
           </div>
         </div>
@@ -178,7 +216,17 @@ export function DetailedReport({
           </div>
           <div className="flex justify-between">
             <span>Threat Level:</span>
-            <span className={`font-bold ${result.threatLevel === "critical" ? "text-red-400" : result.threatLevel === "high" ? "text-orange-400" : "text-green-400"}`}>
+            <span
+              className={`font-bold ${
+                result.threatLevel === "critical"
+                  ? "text-red-400"
+                  : result.threatLevel === "high"
+                    ? "text-orange-400"
+                    : result.threatLevel === "suspicious"
+                      ? "text-amber-400"
+                      : "text-green-400"
+              }`}
+            >
               {result.threatLevel.toUpperCase()}
             </span>
           </div>

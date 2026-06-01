@@ -11,19 +11,16 @@ const senderSelector = "h3.iw span[email]"
 const subjectSelector = "h2.hP"
 const bodySelector = "div.a3s"
 const attachmentSelector = "div.aQA span.aV3"
-const headerSelector = "div.gX" // Gmail header section
 
 const safeQueryText = (selector: string) => document.querySelector(selector)?.textContent?.trim() || ""
 
 const extractGmailHeaders = (): Record<string, string> => {
   const headers: Record<string, string> = {}
   
-  // Look for authentication headers in Gmail's email details
   const headerSection = document.querySelector("div.gX, div.nH")
   if (headerSection) {
     const text = headerSection.textContent?.toLowerCase() || ""
     
-    // Extract SPF, DKIM, DMARC status from visible headers
     if (text.includes("spf=pass")) headers["spf"] = "pass"
     else if (text.includes("spf=fail")) headers["spf"] = "fail"
     else if (text.includes("spf=neutral")) headers["spf"] = "neutral"
@@ -33,15 +30,6 @@ const extractGmailHeaders = (): Record<string, string> => {
     
     if (text.includes("dmarc=pass")) headers["dmarc"] = "pass"
     else if (text.includes("dmarc=fail")) headers["dmarc"] = "fail"
-  }
-  
-  // Try to find from Gmail's security details tooltip
-  const securityIcon = document.querySelector("g-img[data-tooltip*='signed']")
-  if (securityIcon) {
-    const tooltip = securityIcon.getAttribute("data-tooltip") || ""
-    if (tooltip.toLowerCase().includes("fail")) {
-      headers["authentication"] = "failed"
-    }
   }
   
   return headers
@@ -80,6 +68,45 @@ const extractGmailEmail = (): RawEmailDom | null => {
   }
 }
 
+const showBanner = (text: string, threatLevel: string) => {
+  const existing = document.getElementById("phis-banner-host")
+  if (existing) existing.remove()
+
+  const host = document.createElement("div")
+  host.id = "phis-banner-host"
+  const shadow = host.attachShadow({ mode: "closed" })
+
+  const levelColors: Record<string, string> = {
+    safe: "#10b981",
+    low: "#06b6d4",
+    suspicious: "#f59e0b",
+    high: "#f97316",
+    critical: "#ef4444"
+  }
+  const color = levelColors[threatLevel] ?? "#06b6d4"
+
+  const inner = document.createElement("div")
+  inner.style.cssText = [
+    "position:fixed",
+    "top:12px",
+    "right:12px",
+    "z-index:2000000000",
+    "padding:12px 14px",
+    "max-width:460px",
+    "border-radius:12px",
+    "background:rgba(9,16,26,0.96)",
+    `border:1px solid ${color}`,
+    "box-shadow:0 14px 32px rgba(0,0,0,0.38)",
+    "font:12px/1.4 Segoe UI,sans-serif",
+    `color:${color}`,
+    "user-select:none"
+  ].join(";")
+  inner.textContent = text
+  shadow.appendChild(inner)
+  document.body.appendChild(host)
+  setTimeout(() => host.remove(), 12000)
+}
+
 const injectActionButton = () => {
   if (document.querySelector("#phis-scan-button")) return
   const toolbar = document.querySelector("div[gh=mtb]")
@@ -103,30 +130,25 @@ const injectActionButton = () => {
   button.addEventListener("click", () => {
     const email = extractGmailEmail()
     if (!email) return
-    chrome.runtime.sendMessage({ type: "PHIS_ANALYZE_EMAIL", payload: email }, (response) => {
-      if (!response?.ok || !response.result) return
-      const existing = document.querySelector("#phis-banner")
-      if (existing) existing.remove()
+    button.textContent = "Scanning..."
+    button.style.opacity = "0.6"
 
-      const banner = document.createElement("div")
-      banner.id = "phis-banner"
-      banner.textContent = `PHIS Sentinel: ${response.result.threatLevel.toUpperCase()} (${response.result.score}/100) - ${response.result.explanation[0] || "No major indicators"}`
-      banner.style.cssText = [
-        "position:fixed",
-        "top:12px",
-        "right:12px",
-        "z-index:2147483647",
-        "padding:12px 14px",
-        "max-width:460px",
-        "border-radius:12px",
-        "background:rgba(9,16,26,0.96)",
-        "color:#ecfeff",
-        "border:1px solid rgba(53,212,255,0.45)",
-        "box-shadow:0 14px 32px rgba(0,0,0,0.38)",
-        "font:12px/1.4 Segoe UI"
-      ].join(";")
-      document.body.appendChild(banner)
-      setTimeout(() => banner.remove(), 12000)
+    chrome.runtime.sendMessage({ type: "PHIS_ANALYZE_EMAIL", payload: email }, (response) => {
+      button.textContent = "Scan Email"
+      button.style.opacity = "1"
+
+      if (chrome.runtime.lastError) {
+        showBanner("PHIS Sentinel: scan error — " + chrome.runtime.lastError.message, "suspicious")
+        return
+      }
+      if (!response?.ok || !response.result) {
+        showBanner("PHIS Sentinel: analysis failed", "suspicious")
+        return
+      }
+
+      const { threatLevel, score, explanation } = response.result
+      const summary = explanation[0] || "No major indicators detected"
+      showBanner(`PHIS Sentinel: ${threatLevel.toUpperCase()} (${score}/100) — ${summary}`, threatLevel)
     })
   })
 
@@ -137,14 +159,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "PHIS_REQUEST_ACTIVE_EMAIL") {
     return false
   }
-
   sendResponse({ email: extractGmailEmail() })
   return false
 })
 
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
 const observer = new MutationObserver(() => {
-  injectActionButton()
+  if (debounceTimer !== null) clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(injectActionButton, 400)
 })
 
 observer.observe(document.documentElement, { childList: true, subtree: true })
 injectActionButton()
+
+window.addEventListener("beforeunload", () => {
+  observer.disconnect()
+  if (debounceTimer !== null) clearTimeout(debounceTimer)
+})
