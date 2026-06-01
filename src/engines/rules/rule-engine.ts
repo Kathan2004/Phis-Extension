@@ -129,17 +129,11 @@ export const runRuleEngine = (email: EmailArtifact): Indicator[] => {
 
   email.links.forEach((link) => {
     const hrefDomain = domainFromUrl(link.href)
-    const visibleDomain = (link.visibleDomain || "").toLowerCase()
-    if (visibleDomain && hrefDomain && visibleDomain !== hrefDomain) {
-      indicators.push({
-        id: `anchor_mismatch_${hrefDomain}`,
-        category: "url",
-        weight: 20,
-        title: "Mismatched visible link",
-        detail: "Displayed link destination differs from actual URL.",
-        evidence: `${visibleDomain} -> ${hrefDomain}`
-      })
-    }
+
+    // REMOVED: Display text mismatches (anchor mismatch)
+    // Industry standard: Gmail, Outlook, etc. do NOT flag display text vs URL mismatches
+    // This is normal in legitimate emails for branding, marketing, and user clarity
+    // The actual risk is WHERE the link goes, not what text is displayed
 
     if (hrefDomain && (hasSuspiciousUnicode(hrefDomain) || hasHomoglyphPatterns(hrefDomain))) {
       indicators.push({
