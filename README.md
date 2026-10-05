@@ -13,13 +13,21 @@ PHIS Sentinel is an endpoint-native, serverless anti-phishing browser extension 
 ## Local Development
 
 1. Install dependencies:
-   - `npm.cmd install --ignore-scripts`
+   - `npm ci`
 2. Start extension development:
-   - `npm.cmd run dev`
+   - `npm run dev`
 3. Build package:
-   - `npm.cmd run build`
+   - `npm run build`
 
 Note: In strict corporate environments, optional native postinstall artifacts may fail TLS validation. Use enterprise certificate trust or internal artifact mirrors for production CI.
+
+## Checks
+
+```bash
+npm run typecheck && npm run lint && npm test && npm run build
+```
+
+CI runs the same steps, plus a gitleaks history scan, on every pull request.
 
 ## Production Folder Structure
 
