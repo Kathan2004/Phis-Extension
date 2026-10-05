@@ -4,6 +4,11 @@ const loginBaitKeywords = ["signin", "login", "verify", "account", "password", "
 const suspiciousHosts = ["bit.ly", "tinyurl.com", "is.gd", "rb.gy"]
 const suspiciousLoginHostHints = ["microsoft", "office", "okta", "google", "appleid", "adobe"]
 const riskyUrlTlds = new Set(["zip", "top", "xyz", "click"])
+const trustedLoginDomains = ["microsoft.com", "office.com", "live.com", "google.com", "apple.com", "okta.com", "adobe.com"]
+
+/** True when host is domain itself or a subdomain of it (not merely a string suffix). */
+export const isSameOrSubdomain = (host: string, domain: string): boolean =>
+  host === domain || host.endsWith(`.${domain}`)
 
 export const runUrlIntelligence = (email: EmailArtifact): Indicator[] => {
   const indicators: Indicator[] = []
@@ -14,7 +19,7 @@ export const runUrlIntelligence = (email: EmailArtifact): Indicator[] => {
       const host = parsed.hostname.toLowerCase()
       const path = `${parsed.pathname}${parsed.search}`.toLowerCase()
 
-      if (suspiciousHosts.some((item) => host.endsWith(item))) {
+      if (suspiciousHosts.some((item) => isSameOrSubdomain(host, item))) {
         indicators.push({
           id: `shortener_${host}`,
           category: "url",
@@ -50,7 +55,8 @@ export const runUrlIntelligence = (email: EmailArtifact): Indicator[] => {
       }
 
       const looksLikeTrustedLogin = suspiciousLoginHostHints.some((hint) => path.includes(hint) || host.includes(hint))
-      const mismatchedBrandInfra = looksLikeTrustedLogin && !/(microsoft\.com|office\.com|live\.com|google\.com|apple\.com|okta\.com|adobe\.com)$/i.test(host)
+      const mismatchedBrandInfra =
+        looksLikeTrustedLogin && !trustedLoginDomains.some((domain) => isSameOrSubdomain(host, domain))
       if (mismatchedBrandInfra) {
         indicators.push({
           id: `fake_login_${host}`,
@@ -58,6 +64,18 @@ export const runUrlIntelligence = (email: EmailArtifact): Indicator[] => {
           weight: 15,
           title: "Possible fake login infrastructure",
           detail: "URL resembles trusted identity provider paths but host does not match expected domain.",
+          evidence: host
+        })
+      }
+
+      // The URL parser converts lookalike Unicode hosts to punycode, so check for IDN labels here.
+      if (host.split(".").some((label) => label.startsWith("xn--"))) {
+        indicators.push({
+          id: `idn_host_${host}`,
+          category: "url",
+          weight: 14,
+          title: "Internationalised (punycode) domain",
+          detail: "Host uses IDN labels, a common technique for homoglyph lookalike domains.",
           evidence: host
         })
       }
